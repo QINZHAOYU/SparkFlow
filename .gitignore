@@ -1,0 +1,13 @@
+.vscode/
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
+
+temp
+result
+results
+report
+reports
+dist
+build
