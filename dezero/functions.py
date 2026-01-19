@@ -1,6 +1,7 @@
 import numpy as np
-import cuda, utils
-from core import Function, Variable, Config, as_variable, as_array
+import dezero
+from dezero import cuda, utils
+from dezero.core import Function, Variable, as_variable, as_array
 
 
 # =============================================================================
@@ -149,7 +150,7 @@ class GetItemGrad(Function):
         self.in_shape = in_shape
 
     def forward(self, gy):
-        xp = cuda.get_array_module(gy)
+        xp = dezero.cuda.get_array_module(gy)
         gx = xp.zeros(self.in_shape, dtype=gy.dtype)
 
         if xp is np:
@@ -228,7 +229,7 @@ class BroadcastTo(Function):
 
     def forward(self, x):
         self.x_shape = x.shape
-        xp = cuda.get_array_module(x)
+        xp = dezero.cuda.get_array_module(x)
         y = xp.broadcast_to(x, self.shape)
         return y
 
@@ -515,7 +516,7 @@ def accuracy(y, t):
 def dropout(x, dropout_ratio=0.5):
     x = as_variable(x)
 
-    if Config.train:
+    if dezero.Config.train:
         xp = cuda.get_array_module(x)
         mask = xp.random.rand(*x.shape) > dropout_ratio
         scale = xp.array(1.0 - dropout_ratio).astype(x.dtype)
@@ -544,7 +545,7 @@ class BatchNorm(Function):
 
         xp = cuda.get_array_module(x)
 
-        if Config.train:
+        if dezero.Config.train:
             mean = x.mean(axis=0)
             var = x.var(axis=0)
             inv_std = 1 / xp.sqrt(var + self.eps)
@@ -663,18 +664,18 @@ def clip(x, x_min, x_max):
 # =============================================================================
 # conv2d / col2im / im2col / basic_math
 # =============================================================================
-from functions_conv import conv2d
-from functions_conv import deconv2d
-from functions_conv import conv2d_simple
-from functions_conv import im2col
-from functions_conv import col2im
-from functions_conv import pooling_simple
-from functions_conv import pooling
-from functions_conv import average_pooling
-from core import add
-from core import sub
-from core import rsub
-from core import mul
-from core import div
-from core import neg
-from core import pow
+from dezero.functions_conv import conv2d
+from dezero.functions_conv import deconv2d
+from dezero.functions_conv import conv2d_simple
+from dezero.functions_conv import im2col
+from dezero.functions_conv import col2im
+from dezero.functions_conv import pooling_simple
+from dezero.functions_conv import pooling
+from dezero.functions_conv import average_pooling
+from dezero.core import add
+from dezero.core import sub
+from dezero.core import rsub
+from dezero.core import mul
+from dezero.core import div
+from dezero.core import neg
+from dezero.core import pow

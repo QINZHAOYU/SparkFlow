@@ -1,8 +1,8 @@
 import numpy as np
-import cuda
-from core import Function, as_variable
-from utils import pair, get_conv_outsize, get_deconv_outsize
-from functions import linear, broadcast_to
+from dezero import cuda
+from dezero.core import Function, as_variable
+from dezero.utils import pair, get_conv_outsize, get_deconv_outsize
+from dezero.functions import linear, broadcast_to
 
 
 # =============================================================================

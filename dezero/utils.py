@@ -2,8 +2,9 @@ import os
 import subprocess
 import urllib.request
 import numpy as np
-from core import Variable, as_variable
-import cuda
+from dezero.core import as_variable
+from dezero.core import Variable
+from dezero import cuda
 
 
 # =============================================================================
@@ -98,6 +99,7 @@ def plot_dot_graph(output, verbose=True, to_file="graph.png"):
 
         return display.Image(filename=to_file)
     except:
+        print("plot graph failed.")
         pass
 
 
@@ -232,6 +234,9 @@ def gradient_check(f, x, *args, rtol=1e-4, atol=1e-5, **kwargs):
 
 def numerical_grad(f, x, *args, **kwargs):
     """Computes numerical gradient by finite differences.
+
+    这种方案不可行的原有在于，它需要对每个变量进行微分和求导（正向计算），计算量太大。
+    因此对于大型网络，拥有高达几十上百万的参数，计算效率太低。
 
     Args:
         f (callable): A function which gets `Variable`s and returns `Variable`s.

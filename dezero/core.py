@@ -1,7 +1,7 @@
 import weakref
 import numpy as np
 import contextlib
-import cuda, functions
+import dezero
 
 
 # =============================================================================
@@ -82,7 +82,7 @@ class Variable:
 
     def set_creator(self, func):
         self.creator = func
-        self.generation = func.generation + 1
+        self.generation = func.generation + 1  # 在函数代数上增加1
 
     def unchain(self):
         self.creator = None
@@ -92,13 +92,13 @@ class Variable:
 
     def backward(self, retain_grad=False, create_graph=False):
         if self.grad is None:
-            xp = cuda.get_array_module(self.data)
-            self.grad = Variable(xp.ones_like(self.data))
+            xp = dezero.cuda.get_array_module(self.data)
+            self.grad = Variable(xp.ones_like(self.data))  # 正向计算图末端变量的梯度为1
 
         funcs = []
-        seen_set = set()
+        seen_set = set()  # 防止同一个函数实例对象被重复添加
 
-        def add_func(f):
+        def add_func(f):  # 按生成顺序添加函数（拓扑排序）
             if f not in seen_set:
                 funcs.append(f)
                 seen_set.add(f)
@@ -106,24 +106,27 @@ class Variable:
 
         add_func(self.creator)
         while funcs:
-            f = funcs.pop()
+            f = funcs.pop()  # 取出列表中末尾的函数
             gys = [output().grad for output in f.outputs]  # output is weakref
 
-            with using_config("enable_backprop", create_graph):
-                gxs = f.backward(*gys)
+            with using_config("enable_backprop", create_graph):  # 是否反向传播（train）
+                gxs = f.backward(*gys)  # 反向传播计算x梯度变量 (gx = x.grad)
                 if not isinstance(gxs, tuple):
                     gxs = (gxs,)
 
-                for x, gx in zip(f.inputs, gxs):
+                for x, gx in zip(f.inputs, gxs):  # 赋值x.grad
                     if x.grad is None:
                         x.grad = gx
                     else:
-                        x.grad = x.grad + gx
+                        x.grad = x.grad + gx  # 变量重用时梯度累加
+                        # 注意不是+=（in-place就地操作会修改 x.grad的内存对象，
+                        # 如果有其他地方引用该对象，会造成污染，导致计算图错误；
+                        # 而+则会创建新的对象，不会影响原对象）
 
                     if x.creator is not None:
-                        add_func(x.creator)
+                        add_func(x.creator)  # 更新生成函数列表
 
-            if not retain_grad:
+            if not retain_grad:  # 保留计算图，用于内存优化
                 for y in f.outputs:
                     y().grad = None  # y is weakref
 
@@ -140,7 +143,7 @@ class Variable:
     def reshape(self, *shape):
         if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
             shape = shape[0]
-        return functions.reshape(self, shape)
+        return dezero.functions.reshape(self, shape)
 
     def transpose(self, *axes):
         if len(axes) == 0:
@@ -148,22 +151,22 @@ class Variable:
         elif len(axes) == 1:
             if isinstance(axes[0], (tuple, list)) or axes[0] is None:
                 axes = axes[0]
-        return functions.transpose(self, axes)
+        return dezero.functions.transpose(self, axes)
 
     @property
     def T(self):
-        return functions.transpose(self)
+        return dezero.functions.transpose(self)
 
     def sum(self, axis=None, keepdims=False):
-        return functions.sum(self, axis, keepdims)
+        return dezero.functions.sum(self, axis, keepdims)
 
     def to_cpu(self):
         if self.data is not None:
-            self.data = cuda.as_numpy(self.data)
+            self.data = dezero.cuda.as_numpy(self.data)
 
     def to_gpu(self):
         if self.data is not None:
-            self.data = cuda.as_cupy(self.data)
+            self.data = dezero.cuda.as_cupy(self.data)
 
 
 class Parameter(Variable):
@@ -192,8 +195,10 @@ class Function:
             ys = (ys,)
         outputs = [Variable(as_array(y)) for y in ys]
 
-        if Config.enable_backprop:
-            self.generation = max([x.generation for x in inputs])
+        if Config.enable_backprop:  # 生成计算图用于反向传播
+            self.generation = max(
+                [x.generation for x in inputs]
+            )  # 函数不增加变量的代数
             for output in outputs:
                 output.set_creator(self)
             self.inputs = inputs
@@ -205,6 +210,7 @@ class Function:
         raise NotImplementedError()
 
     def backward(self, gys):
+        # 上游梯度×局部梯度
         raise NotImplementedError()
 
 
@@ -220,13 +226,13 @@ class Add(Function):
     def backward(self, gy):
         gx0, gx1 = gy, gy
         if self.x0_shape != self.x1_shape:  # for broadcaset
-            gx0 = functions.sum_to(gx0, self.x0_shape)
-            gx1 = functions.sum_to(gx1, self.x1_shape)
+            gx0 = dezero.functions.sum_to(gx0, self.x0_shape)
+            gx1 = dezero.functions.sum_to(gx1, self.x1_shape)
         return gx0, gx1
 
 
 def add(x0, x1):
-    x1 = as_array(x1, cuda.get_array_module(x0.data))
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Add()(x0, x1)
 
 
@@ -240,13 +246,13 @@ class Mul(Function):
         gx0 = gy * x1
         gx1 = gy * x0
         if x0.shape != x1.shape:  # for broadcast
-            gx0 = functions.sum_to(gx0, x0.shape)
-            gx1 = functions.sum_to(gx1, x1.shape)
+            gx0 = dezero.functions.sum_to(gx0, x0.shape)
+            gx1 = dezero.functions.sum_to(gx1, x1.shape)
         return gx0, gx1
 
 
 def mul(x0, x1):
-    x1 = as_array(x1, cuda.get_array_module(x0.data))
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Mul()(x0, x1)
 
 
@@ -272,18 +278,18 @@ class Sub(Function):
         gx0 = gy
         gx1 = -gy
         if self.x0_shape != self.x1_shape:  # for broadcast
-            gx0 = functions.sum_to(gx0, self.x0_shape)
-            gx1 = functions.sum_to(gx1, self.x1_shape)
+            gx0 = dezero.functions.sum_to(gx0, self.x0_shape)
+            gx1 = dezero.functions.sum_to(gx1, self.x1_shape)
         return gx0, gx1
 
 
 def sub(x0, x1):
-    x1 = as_array(x1, cuda.get_array_module(x0.data))
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Sub()(x0, x1)
 
 
 def rsub(x0, x1):
-    x1 = as_array(x1, cuda.get_array_module(x0.data))
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Sub()(x1, x0)
 
 
@@ -297,18 +303,18 @@ class Div(Function):
         gx0 = gy / x1
         gx1 = gy * (-x0 / x1**2)
         if x0.shape != x1.shape:  # for broadcast
-            gx0 = functions.sum_to(gx0, x0.shape)
-            gx1 = functions.sum_to(gx1, x1.shape)
+            gx0 = dezero.functions.sum_to(gx0, x0.shape)
+            gx1 = dezero.functions.sum_to(gx1, x1.shape)
         return gx0, gx1
 
 
 def div(x0, x1):
-    x1 = as_array(x1, cuda.get_array_module(x0.data))
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Div()(x0, x1)
 
 
 def rdiv(x0, x1):
-    x1 = as_array(x1, cuda.get_array_module(x0.data))
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Div()(x1, x0)
 
 
@@ -342,9 +348,9 @@ def setup_variable():
     Variable.__truediv__ = div
     Variable.__rtruediv__ = rdiv
     Variable.__pow__ = pow
-    Variable.__getitem__ = functions.get_item
+    Variable.__getitem__ = dezero.functions.get_item
 
-    Variable.matmul = functions.matmul
-    Variable.dot = functions.matmul
-    Variable.max = functions.max
-    Variable.min = functions.min
+    Variable.matmul = dezero.functions.matmul
+    Variable.dot = dezero.functions.matmul
+    Variable.max = dezero.functions.max
+    Variable.min = dezero.functions.min
